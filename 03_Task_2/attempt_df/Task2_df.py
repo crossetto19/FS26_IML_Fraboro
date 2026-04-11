@@ -134,9 +134,8 @@ class Model(object):
         self._x_train = None
         self._y_train = None
 
-        # New kernel using the selected kernel plus a whiteKernel to handle alpha
-        newKernel = kernel + WhiteKernel(noise_level=1.0)
-        self.gpr = GaussianProcessRegressor(kernel=newKernel, normalize_y=True, n_restarts_optimizer=5)
+        # Allow to choose which kernel is used and add variance with alpha
+        self.gpr = GaussianProcessRegressor(kernel=kernel, alpha=0.2, normalize_y=True)
 
         # Initate a scaler to better handle the data
         self.scaler = StandardScaler()
@@ -162,22 +161,22 @@ class Model(object):
 # Create the scaled version of X_train for testing
 cv_scaler = StandardScaler()
 X_train_cv_scaled = cv_scaler.fit_transform(X_train)
+
+# Different alpha values to test
+for j in [0.1, 0.2, 0.3, 0.5]:
+    print("Current alpha value:", j)
     
-# Test how well the different kernel fit the train data
-for i in [DotProduct(), RBF(), Matern(), RationalQuadratic()]:
-    # Create a new kernel like above
-    newKernel = i + WhiteKernel(noise_level=1.0)
-    
-    # Add variance with alpha
-    test_gpr = GaussianProcessRegressor(kernel=newKernel, normalize_y=True, n_restarts_optimizer=5)
-    
-    # Run cross-validation
-    scores = cross_val_score(test_gpr, X_train_cv_scaled, y_train, cv=5, scoring='r2')
-    
-    print(i)
-    print(scores)
-    print(scores.mean())
-    print(scores.std())
+    # Test how well the different kernel fit the train data
+    for i in [DotProduct(), RBF(), Matern(), RationalQuadratic()]:
+        
+        # Add variance with alpha
+        test_gpr = GaussianProcessRegressor(kernel=i, alpha=j, normalize_y=True)
+        
+        # Run cross-validation
+        scores = cross_val_score(test_gpr, X_train_cv_scaled, y_train, cv=5, scoring='r2')
+        
+        print(i)
+        print(scores.mean())
 
 # %%
 model = Model(RationalQuadratic())

@@ -59,24 +59,55 @@ print(test_df.head(2))
 # Drop rows where no value for CHF is given
 train_df = train_df[train_df["price_CHF"].notna()]
 
-# Split into X and y train
+# Split into y train
 y_train = train_df['price_CHF']
-X_train_raw = train_df.drop(['price_CHF'], axis=1)
-X_test_raw = test_df.copy()
+
+# Apply the iterative imputer grouped by seasons
+seasons = ["spring", "summer", "autumn", "winter"]
+
+# List to hold the imputed season for train and test data
+train_parts = []
+test_parts = []
+
+# Iterate over the seasons
+for season in seasons:
+    # Filter out current season
+    train_season = train_df[train_df["season"] == season]
+    test_season = test_df[test_df["season"] == season]
+
+    # Drop not needed cols
+    train_features = train_season.drop(columns=["season", "price_CHF"])
+    test_features = test_season.drop(columns=["season"])
+
+    # Fit an imputer only on the current seaons and apply it to the test data
+    imp = IterativeImputer(max_iter=10, random_state=0)
+    train_imputed = imp.fit_transform(train_features)
+    test_imputed = imp.transform(test_features)
+
+    # Convert back to a df
+    train_part = pd.DataFrame(train_imputed, columns=train_features.columns, index=train_season.index)
+    test_part = pd.DataFrame(test_imputed, columns=test_features.columns, index=test_season.index)
+
+    # Add season back as col
+    train_part["season"] = season
+    test_part["season"] = season
+
+    train_parts.append(train_part)
+    test_parts.append(test_part)
+
+# Combine the parts back together and get right order as before
+train_combined = pd.concat(train_parts).sort_index()
+test_combined = pd.concat(test_parts).sort_index()
 
 # Convert the seasons into numerical values
-X_train_num = pd.get_dummies(X_train_raw, columns=["season"], dtype=int)
-X_test_num = pd.get_dummies(X_test_raw, columns=["season"], dtype=int)
+X_train_num = pd.get_dummies(train_combined, columns=["season"], dtype=int)
+X_test_num = pd.get_dummies(test_combined, columns=["season"], dtype=int)
 
-# Applying iterative imputer to handle nan in train data
-imp = IterativeImputer(max_iter=10, random_state=0)
-X_train_imp = imp.fit_transform(X_train_num) 
-X_test_imp = imp.transform(X_test_num)
 
 # TODO: Perform data preprocessing, imputation and extract X_train, y_train and X_test
-X_train = X_train_imp
+X_train = X_train_num.to_numpy()
 y_train = y_train.to_numpy()
-X_test = X_test_imp
+X_test = X_test_num.to_numpy()
 
 assert (X_train.shape[1] == X_test.shape[1]) and (X_train.shape[0] == y_train.shape[0]) and (X_test.shape[0] == 100), "Invalid data shape"
 
@@ -135,10 +166,10 @@ class Model(object):
         self._y_train = None
 
         # Allow to choose which kernel is used and add variance with alpha
-        self.gpr = GaussianProcessRegressor(kernel=kernel, alpha=0.2)
+        self.gpr = GaussianProcessRegressor(kernel=kernel, alpha=0.02, normalize_y=True)
 
         # Initate a scaler to better handle the data
-        self.scaler = StandardScaler()
+        self.scaler = RobustScaler()
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray):
         #TODO: Define the model and fit it using (X_train, y_train)
@@ -159,18 +190,18 @@ class Model(object):
 
 # %%
 # Create the scaled version of X_train for testing
-cv_scaler = StandardScaler()
+cv_scaler = RobustScaler()
 X_train_cv_scaled = cv_scaler.fit_transform(X_train)
 
 # Different alpha values to test
-for j in [0.1, 0.2, 0.3, 0.5]:
+for j in [0.01, 0.02, 0.03, 0.04, 0.05]:
     print("Current alpha value:", j)
     
     # Test how well the different kernel fit the train data
     for i in [DotProduct(), RBF(), Matern(), RationalQuadratic()]:
         
         # Add variance with alpha
-        test_gpr = GaussianProcessRegressor(kernel=i, alpha=j)
+        test_gpr = GaussianProcessRegressor(kernel=i, alpha=j, normalize_y=True)
         
         # Run cross-validation
         scores = cross_val_score(test_gpr, X_train_cv_scaled, y_train, cv=5, scoring='r2')
@@ -180,7 +211,7 @@ for j in [0.1, 0.2, 0.3, 0.5]:
 
 
 # %%
-model = Model(RationalQuadratic())
+model = Model(RBF())
 # Use this function to fit the model
 model.fit(X_train=X_train, y_train=y_train)
 # Use this function for inference

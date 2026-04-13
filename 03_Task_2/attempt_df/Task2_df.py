@@ -12,12 +12,14 @@ import pandas as pd
 
 # Add any other imports you need here
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, KNNImputer
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import DotProduct, RBF, Matern, RationalQuadratic, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import KFold
 
 # %% [markdown]
 # # Data Loading
@@ -68,15 +70,10 @@ X_test_raw = test_df.copy()
 X_train_num = pd.get_dummies(X_train_raw, columns=["season"], dtype=int)
 X_test_num = pd.get_dummies(X_test_raw, columns=["season"], dtype=int)
 
-# Applying iterative imputer to handle nan in train data
-imp = IterativeImputer(max_iter=10, random_state=0)
-X_train_imp = imp.fit_transform(X_train_num) 
-X_test_imp = imp.transform(X_test_num)
-
 # TODO: Perform data preprocessing, imputation and extract X_train, y_train and X_test
-X_train = X_train_imp
+X_train = X_train_num
 y_train = y_train.to_numpy()
-X_test = X_test_imp
+X_test = X_test_num
 
 assert (X_train.shape[1] == X_test.shape[1]) and (X_train.shape[0] == y_train.shape[0]) and (X_test.shape[0] == 100), "Invalid data shape"
 
@@ -134,52 +131,62 @@ class Model(object):
         self._x_train = None
         self._y_train = None
 
-        # Allow to choose which kernel is used and add variance with alpha
-        self.gpr = GaussianProcessRegressor(kernel=kernel, alpha=0.2, normalize_y=True)
-
-        # Initate a scaler to better handle the data
-        self.scaler = StandardScaler()
+        self.pipeline = make_pipeline(
+            KNNImputer(n_neighbors=10, weights="distance", add_indicator=True),
+            StandardScaler(),
+            GaussianProcessRegressor(kernel=kernel, alpha=0.01, normalize_y=True, n_restarts_optimizer=1)
+        )
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray):
         #TODO: Define the model and fit it using (X_train, y_train)
         self._x_train = X_train
         self._y_train = y_train
         # Use the scaler to transfrom and fit the data
-        X_train_scaled = self.scaler.fit_transform(X_train)
-        self.gpr.fit(X_train_scaled, y_train)
+        self.pipeline.fit(X_train, y_train)
 
     def predict(self, X_test: np.ndarray) -> np.ndarray:
         #TODO: Use the model to make predictions y_pred using test data X_test
         # Use the scaler to transform the data
-        X_test_scaled = self.scaler.transform(X_test)
-        y_pred = self.gpr.predict(X_test_scaled)
+        y_pred = self.pipeline.predict(X_test)
 
         assert y_pred.shape == (X_test.shape[0],), "Invalid data shape"
         return y_pred
 
 # %%
-# Create the scaled version of X_train for testing
-cv_scaler = StandardScaler()
-X_train_cv_scaled = cv_scaler.fit_transform(X_train)
-
 # Different alpha values to test
-for j in [0.1, 0.2, 0.3, 0.5]:
+n_features = X_train_num.shape[1] + int(X_train_num.isnull().any().sum())
+ard = np.ones(n_features)
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+for j in [0.01, 0.05, 0.1]:
     print("Current alpha value:", j)
     
     # Test how well the different kernel fit the train data
-    for i in [DotProduct(), RBF(), Matern(), RationalQuadratic()]:
+    for i in [DotProduct(), 
+              RBF(length_scale=ard, length_scale_bounds=(1e-5, 1e8)), 
+              Matern(length_scale=ard, length_scale_bounds=(1e-5, 1e8)), 
+              RationalQuadratic(length_scale=1.0, length_scale_bounds=(1e-5, 1e8)),
+              Matern(length_scale=ard, length_scale_bounds=(1e-5, 1e8)) + RationalQuadratic(length_scale=1.0, length_scale_bounds=(1e-5, 1e8))]:
         
-        # Add variance with alpha
-        test_gpr = GaussianProcessRegressor(kernel=i, alpha=j, normalize_y=True)
+        pipeline = make_pipeline(
+            KNNImputer(n_neighbors=10, weights="distance", add_indicator=True),
+            StandardScaler(),
+            GaussianProcessRegressor(kernel=i, alpha=j, normalize_y=True, n_restarts_optimizer=1) 
+        )
         
         # Run cross-validation
-        scores = cross_val_score(test_gpr, X_train_cv_scaled, y_train, cv=5, scoring='r2')
+        scores = cross_val_score(pipeline, X_train_num, y_train, cv=kf, scoring='r2')
         
         print(i)
         print(scores.mean())
 
 # %%
-model = Model(RationalQuadratic())
+# Apply the best performing kernel
+n_features = X_train_num.shape[1] + int(X_train_num.isnull().any().sum())
+ard = np.ones(n_features)
+
+model = Model(Matern(length_scale=ard, length_scale_bounds=(1e-5, 1e8)))
 # Use this function to fit the model
 model.fit(X_train=X_train, y_train=y_train)
 # Use this function for inference

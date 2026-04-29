@@ -12,6 +12,9 @@ import torch.nn.functional as F
 
 import wandb
 # from torch.utils.tensorboard import SummaryWriter
+import shutil
+import os
+
 
 # %% [markdown]
 # README FIRST
@@ -87,8 +90,9 @@ def load_data(**kwargs):
     # Set to False if you don't want to save the images
     if True:
         # Create the output directory if it doesn't exist
-        if not Path("train_image_output").exists():
-            Path("train_image_output").mkdir()
+        if os.path.exists("train_image_output"):
+            shutil.rmtree("train_image_output")
+        os.makedirs("train_image_output")
         for i in tqdm(range(20), desc="Plotting train images"):
             # Show the training and the target image side by side
             plt.subplot(1, 2, 1)
@@ -124,12 +128,12 @@ def training(train_data_input, train_data_label, **kwargs):
     # Setting up wandb
     wandb.init(
         project="iml-task3", 
-        name="run-3-adjustedLoss",
+        name="run-10-CNN-SchedulerFast",
         config={
             "learning_rate": 0.001,
-            "epochs": 10,
+            "epochs": 20,
             "batch_size": 64,
-            "architecture": "MLP"
+            "architecture": "CNN"
         }
     )
     config = wandb.config
@@ -141,6 +145,8 @@ def training(train_data_input, train_data_label, **kwargs):
     criterion = torch.nn.MSELoss()
     # TODO: Dummy optimizer - change this to a more suitable optimizer
     optimizer = torch.optim.Adam(model.parameters(), config.learning_rate)
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
     # TODO: Correctly setup the dataloader - the below is just a placeholder
     # Also consider that you might not want to use the entire dataset for
@@ -164,6 +170,7 @@ def training(train_data_input, train_data_label, **kwargs):
     for epoch in range(config.epochs):
         model.train()
         epoch_loss = 0
+        epoch_eval_mse = 0
         for x, y in tqdm(
             data_loader, desc=f"Training Epoch {epoch}", leave=False
         ):
@@ -182,15 +189,19 @@ def training(train_data_input, train_data_label, **kwargs):
             optimizer.step()
 
             epoch_loss += loss.item()
+            epoch_eval_mse += eval_mse.item()
+
             wandb.log({
                 "batch_loss": loss.item(), 
                 "eval_mse_score": eval_mse.item()
             })
 
         avg_loss = epoch_loss / len(data_loader)
+        avg_eval_mse = epoch_eval_mse / len(data_loader)
         log_dict = {
             "epoch": epoch,
-            "epoch_loss": avg_loss
+            "epoch_loss": avg_loss,
+            "epoch_eval_mse": avg_eval_mse
         }
 
         if epoch % 5 == 0:
@@ -214,6 +225,8 @@ def training(train_data_input, train_data_label, **kwargs):
         wandb.log(log_dict)
         print(f"Epoch {epoch} Avg Loss: {avg_loss:.6f}")
 
+        scheduler.step(eval_mse)
+
     wandb.unwatch(model)
     wandb.finish()
     # writer.close()
@@ -233,23 +246,54 @@ class Model(nn.Module):
         The constructor of the model.
         """
         super().__init__()
-        self.fc = nn.Linear(784, 784)
+        # self.fc = nn.Linear(784, 784)
+        # Encoder
+        self.enc1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        
+        self.enc2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        # Bottleneck
+        self.bottleneck = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn_bottle = nn.BatchNorm2d(128)
+
+        # Decoder
+        self.up1 = nn.Upsample(scale_factor=2, mode='nearest')
+        self.dec1 = nn.Conv2d(192, 64, kernel_size=3, padding=1) 
+        self.bn3 = nn.BatchNorm2d(64)
+        
+        self.up2 = nn.Upsample(scale_factor=2, mode='nearest')
+        self.dec2 = nn.Conv2d(96, 32, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(32)
+        
+        # Last layer
+        self.final_conv = nn.Conv2d(32, 1, kernel_size=3, padding=1)
 
     def forward(self, x):
-        """
-        The forward pass of the model.
-
-        input: x: torch.Tensor, the input to the model
-
-        output: x: torch.Tensor, the output of the model
-        """
-        # Flatten the image in the last two dimensions
-        x = x.view(x.shape[0], -1)
-        x = self.fc(x)
-        x = torch.sigmoid(x)
-        # Reshape the image to the original shape
-        x = x.view(x.shape[0], 1, 28, 28)
-        return x
+        # Encode
+        x1 = F.relu(self.bn1(self.enc1(x)))
+        x1_pooled = self.pool1(x1)
+        
+        x2 = F.relu(self.bn2(self.enc2(x1_pooled)))
+        x2_pooled = self.pool2(x2)
+        
+        # Bottleneck
+        x_bot = F.relu(self.bn_bottle(self.bottleneck(x2_pooled)))
+        
+        # Decode with skip connections
+        x_up1 = self.up1(x_bot)
+        x_cat1 = torch.cat([x_up1, x2], dim=1) 
+        x_dec1 = F.relu(self.bn3(self.dec1(x_cat1)))
+        
+        x_up2 = self.up2(x_dec1)
+        x_cat2 = torch.cat([x_up2, x1], dim=1)
+        x_dec2 = F.relu(self.bn4(self.dec2(x_cat2)))
+        
+        out = torch.sigmoid(self.final_conv(x_dec2))
+        return out
 
 # %%
 def testing(model, test_data_input):
@@ -311,8 +355,9 @@ def testing(model, test_data_input):
     # Set to False if you don't want to save the images
     if True:
         # Create the output directory if it doesn't exist
-        if not Path("test_image_output").exists():
-            Path("test_image_output").mkdir()
+        if os.path.exists("test_image_output"):
+            shutil.rmtree("test_image_output")
+        os.makedirs("test_image_output")
         for i in tqdm(range(20), desc="Plotting test images"):
             # Show the training and the target image side by side
             plt.subplot(1, 2, 1)

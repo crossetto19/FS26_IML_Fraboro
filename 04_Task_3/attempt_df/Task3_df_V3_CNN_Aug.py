@@ -129,10 +129,10 @@ def training(train_data_input, train_data_label, **kwargs):
     # Setting up wandb
     wandb.init(
         project="iml-task3", 
-        name="run-15-CNN-Aug-newLoss",
+        name="run-16-CNN-Aug100",
         config={
             "learning_rate": 0.001,
-            "epochs": 20,
+            "epochs": 100,
             "batch_size": 64,
             "architecture": "CNN"
         }
@@ -143,8 +143,7 @@ def training(train_data_input, train_data_label, **kwargs):
 
     # TODO: Dummy criterion - change this to the correct loss function
     # https://pytorch.org/docs/stable/nn.html#loss-functions
-    criterion_mse = torch.nn.MSELoss()
-    criterion_l1 = torch.nn.L1Loss()
+    criterion = torch.nn.MSELoss()
     # TODO: Dummy optimizer - change this to a more suitable optimizer
     optimizer = torch.optim.Adam(model.parameters(), config.learning_rate)
 
@@ -162,7 +161,8 @@ def training(train_data_input, train_data_label, **kwargs):
                              batch_size=config.batch_size, 
                              shuffle=True,
                              num_workers=4,
-                             pin_memory=True)
+                             pin_memory=True,
+                             persistent_workers=True)
 
     # Training loop
     # TODO: Modify the training loop in case you need to
@@ -194,11 +194,7 @@ def training(train_data_input, train_data_label, **kwargs):
 
             optimizer.zero_grad()
             output = model(x_aug)
-
-            # Test two loss functions together
-            loss_mse = criterion_mse(output, y_aug)
-            loss_l1 = criterion_l1(output, y_aug)
-            loss = loss_mse + loss_l1
+            loss = criterion(output, y_aug)
 
             with torch.no_grad():
                 eval_mse = F.mse_loss(
@@ -237,7 +233,7 @@ def training(train_data_input, train_data_label, **kwargs):
 
                 combined = np.concatenate([img_in, img_out, img_gt], axis=1)
 
-                # Add a caption so you know which epoch you are looking at in wandb
+                # Add a caption
                 log_dict["reconstruction_viz"] = wandb.Image(
                     combined, 
                     caption=f"Epoch {epoch}: Input | Prediction | Ground Truth"

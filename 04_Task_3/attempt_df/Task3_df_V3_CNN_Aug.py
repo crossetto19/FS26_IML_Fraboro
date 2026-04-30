@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torchvision import transforms
 import wandb
 # from torch.utils.tensorboard import SummaryWriter
 import shutil
@@ -128,7 +129,7 @@ def training(train_data_input, train_data_label, **kwargs):
     # Setting up wandb
     wandb.init(
         project="iml-task3", 
-        name="run-12-CNN-SchedulerWider",
+        name="run-15-CNN-Aug-newLoss",
         config={
             "learning_rate": 0.001,
             "epochs": 20,
@@ -142,7 +143,8 @@ def training(train_data_input, train_data_label, **kwargs):
 
     # TODO: Dummy criterion - change this to the correct loss function
     # https://pytorch.org/docs/stable/nn.html#loss-functions
-    criterion = torch.nn.MSELoss()
+    criterion_mse = torch.nn.MSELoss()
+    criterion_l1 = torch.nn.L1Loss()
     # TODO: Dummy optimizer - change this to a more suitable optimizer
     optimizer = torch.optim.Adam(model.parameters(), config.learning_rate)
 
@@ -156,13 +158,23 @@ def training(train_data_input, train_data_label, **kwargs):
     # Consider the shuffle parameter and other parameters of the DataLoader
     # class (see
     # https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader)
-    data_loader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    data_loader = DataLoader(dataset, 
+                             batch_size=config.batch_size, 
+                             shuffle=True,
+                             num_workers=4,
+                             pin_memory=True)
 
     # Training loop
     # TODO: Modify the training loop in case you need to
 
     # TODO: The value of n_epochs is just a placeholder and likely needs to be
     # changed
+
+    # Trying data augumentation
+    aug_transforms = transforms.Compose([
+        transforms.RandomRotation(degrees=10),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+    ])
 
     fixed_x, fixed_y = next(iter(data_loader))
     fixed_x, fixed_y = fixed_x.to(device), fixed_y.to(device)
@@ -174,15 +186,24 @@ def training(train_data_input, train_data_label, **kwargs):
         for x, y in tqdm(
             data_loader, desc=f"Training Epoch {epoch}", leave=False
         ):
-            x, y = x.to(device), y.to(device)
+            # Apply augumentation
+            y_aug = aug_transforms(y)
+            x_aug = y_aug.clone()
+            x_aug[:, :, 10:18, 10:18] = 0
+            x_aug, y_aug = x_aug.to(device), y_aug.to(device)
+
             optimizer.zero_grad()
-            output = model(x)
-            loss = criterion(output, y)
+            output = model(x_aug)
+
+            # Test two loss functions together
+            loss_mse = criterion_mse(output, y_aug)
+            loss_l1 = criterion_l1(output, y_aug)
+            loss = loss_mse + loss_l1
 
             with torch.no_grad():
                 eval_mse = F.mse_loss(
                     output[:, :, 10:18, 10:18] * 255.0, 
-                    y[:, :, 10:18, 10:18] * 255.0
+                    y_aug[:, :, 10:18, 10:18] * 255.0
                 )
             
             loss.backward()

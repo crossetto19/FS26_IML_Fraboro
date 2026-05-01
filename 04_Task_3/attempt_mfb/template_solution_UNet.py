@@ -71,10 +71,6 @@ class UNetInpainter(nn.Module):
         out = self.dec1(d1)        # 1, 28, 28
         return out
     
-
-# -------------------------------
-# Your original load_data (unchanged)
-# -------------------------------
 def load_data():
     train_data = np.load("train_data.npz")["data"]
     train_data = torch.tensor(train_data, dtype=torch.float32) / 255.0
@@ -88,9 +84,6 @@ def load_data():
 
     return train_inputs, train_labels, test_data_input
 
-# -------------------------------
-# Dataset with optional augmentation
-# -------------------------------
 class AugmentedMNISTDataset(torch.utils.data.Dataset):
     def __init__(self, inputs, labels, augment=True):
         self.inputs = inputs      # already masked (centre zero)
@@ -110,7 +103,6 @@ class AugmentedMNISTDataset(torch.utils.data.Dataset):
             # Apply same random transform to both clean and masked
             # We need to convert to PIL, apply, and back
             # Simpler: use torchvision's functional on tensors
-            from torchvision.transforms import functional as TF
             # Random parameters
             angle = random.uniform(-10, 10)
             translate = (random.uniform(-0.1, 0.1), random.uniform(-0.1, 0.1))
@@ -124,9 +116,6 @@ class AugmentedMNISTDataset(torch.utils.data.Dataset):
             img_masked[:, 10:18, 10:18] = 0.0
         return img_masked, img_clean
 
-# -------------------------------
-# Training function (using your load_data)
-# -------------------------------
 def training(train_inputs, train_labels):
     # 1. Split the raw data first
     train_idx = int(0.9 * len(train_inputs))
@@ -201,20 +190,16 @@ def testing(model, test_input):
     submission = (submission * 255).astype(np.uint8)
     np.savez_compressed("submit_this_test_data_output.npz", data=submission)
 
-# ------------------------------
-# Main
-# -------------------------------
-def main():
 
+def main():
     torch.manual_seed(42)
     np.random.seed(42)
     random.seed(42)
     
     train_inputs, train_labels, test_input = load_data()
     model = training(train_inputs, train_labels)
-    testing(model, test_input)   # use the fixed testing function from previous answer
+    testing(model, test_input)
 
 
 if __name__ == "__main__":
     main()
-

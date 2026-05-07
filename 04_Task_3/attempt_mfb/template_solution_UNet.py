@@ -172,23 +172,30 @@ def training(train_inputs, train_labels):
     model.load_state_dict(torch.load("best_model.pth"))
     return model
 
+
 def testing(model, test_input):
     model.eval()
     outputs = []
     with torch.no_grad():
         for i in range(0, len(test_input), 64):
             batch = test_input[i:i+64].to(device)
-            out = model(batch)                     # full predicted image [0,1]
+            out = model(batch)
             outputs.append(out.cpu())
-    pred_full = torch.cat(outputs).numpy()         # shape (N,1,28,28) in [0,1]
+    
+    #predicted center (N, 1, 28, 28)
+    pred_full = torch.cat(outputs).numpy()
 
-    # Ground truth unmasked pixels come from the original test input (which is masked only in the center)
-    test_input_np = test_input.cpu().numpy()       # also [0,1]
-    submission = test_input_np.copy()
+    #Convert to 0-255 scale
+    pred_full = (pred_full * 255.0)
+    pred_full = np.clip(pred_full, 0, 255).astype(np.uint8)
+
+    #start with pure zeros
+    submission = np.zeros_like(pred_full)
+
+    #Paste only the predicted center into the black canvas
     submission[:, :, 10:18, 10:18] = pred_full[:, :, 10:18, 10:18]
 
-    submission = (submission * 255).astype(np.uint8)
-    np.savez_compressed("submit_this_test_data_output.npz", data=submission)
+    np.savez_compressed("solutionUNET.npz", data=submission)
 
 
 def main():
